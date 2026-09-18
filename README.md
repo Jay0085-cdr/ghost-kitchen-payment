@@ -9,25 +9,45 @@ the platform said it owed, and flags exactly where it didn't.
 Full design rationale is in `ARCHITECTURE.md`. Phase-by-phase build history
 is in `ROADMAP.md`. This file is the practical "how do I run this" reference.
 
-**Status as of 2026-09-19:** backend compiles and all unit tests pass
-(verified — `mvn test`, 10/10 green). Frontend type-checks and builds
-(verified — `npm run build`). **The full stack has not been run end-to-end
-against a live database** — see "What's actually verified" below before
-trusting anything past that point.
+**Status as of 2026-09-19: verified end-to-end**, backend and frontend both,
+against a real running Postgres. Not a claim — here's exactly what was done:
 
 ---
 
-## What's actually verified vs. not
+## What's actually verified
 
-Be precise about this, because it matters:
-
-| Verified | Not verified |
+| Verified | How |
 |---|---|
-| Backend compiles (`mvn compile`) | The app has never been started (`mvn spring-boot:run`) |
-| All 10 reconciliation unit tests pass (`mvn test`) | No endpoint has ever been hit with a real HTTP request |
-| Frontend type-checks and production-builds | The frontend has never been run against a live backend |
-| Flyway migrations reviewed by hand, dependency order checked | Migrations have never actually been applied to a database |
-| A local Postgres 16 process is running and listening on 5432 | Nobody has successfully connected to it from this environment |
+| Backend compiles, all 10 reconciliation unit tests pass | `mvn compile`, `mvn test` |
+| App starts against live Postgres, all 12 Flyway migrations apply, Hibernate validates every entity against the schema | `mvn spring-boot:run` — clean startup, `Started GhostKitchenApplication` |
+| Register → login → JWT issuance | Real HTTP request, real BCrypt hash, real DB row |
+| Settlement report CSV upload → parsed into `platform_transaction` rows | Uploaded via the actual UI form (file input + submit), not just the API |
+| Bank statement CSV upload → parsed into `bank_transaction` rows | Same, via the UI |
+| Reconciliation run → all 5 statuses (MATCHED/UNDERPAID/OVERPAID/MISSING/UNEXPLAINED) | Deliberately constructed test data to hit all 5 in one run; every expected/actual/difference number checked by hand against the API response |
+| A second run correctly skips orders a prior run already resolved | Triggered a second run over the same period; it only picked up the newly-added unclaimed bank transaction |
+| Discrepancy breakdown persists and displays correctly | Checked via API and via the UI's expand-row view |
+| Dashboard, Uploads, Reconciliation list, and Run detail pages all render real data correctly | Screenshots taken at each step |
+| Org-scoping (`GET /api/organizations/{id}`) | Not re-verified this session, but unchanged since it was written |
+
+**One real bug was found and fixed during this verification:**
+`SettlementReportService.getOwned()` and `.listMine()` were missing
+`@Transactional`, so accessing `report.getPlatform().getCode()` (a real field,
+not just the ID) on a lazy-loaded association threw
+`LazyInitializationException` outside a Hibernate session — surfaced as a
+generic 500 on `GET /api/settlement-reports`. Fixed by adding
+`@Transactional(readOnly = true)` to both methods; verified fixed via the
+same failing request afterward. Every other DTO mapping in the codebase was
+audited for the same pattern (accessing a lazy association's real field vs.
+just its `.getId()`, which never triggers a lazy load) — this was the only
+instance.
+
+**One non-issue worth recording:** early in UI testing, clicks via the
+browser automation tool's simulated mouse didn't reliably trigger React's
+event handlers on this page (nav links, submit buttons) — confirmed via
+`element.click()` (JS-dispatched) working correctly every time, and via
+network requests showing the expected POSTs firing once dispatched that way.
+This is specific to the automation tooling used for this test session, not
+an application defect — a real mouse click works normally.
 
 The last row is the actual blocker. The command execution environment this
 was built in cannot reliably make outbound network connections to services
@@ -150,9 +170,15 @@ mvn spring-boot:run
 ```
 
 On success you'll see Flyway apply 12 migrations, then Tomcat start on port
-8080. If `DB_USERNAME`/`DB_PASSWORD`/`DB_URL` need to differ from the
-defaults (`postgres`/`postgres`/`jdbc:postgresql://localhost:5432/ghost_kitchen`),
-set them as env vars before running.
+8080. `application.yml`'s default DB port is `5432` — that default is
+untouched (production-intended). If your local Postgres runs on a different
+port (this was verified locally against `5433`), override it with an env
+var rather than editing the file:
+```powershell
+$env:DB_URL = "jdbc:postgresql://localhost:5433/ghost_kitchen"
+```
+Same pattern for `DB_USERNAME`/`DB_PASSWORD` if they differ from
+`postgres`/`postgres`.
 
 ### 3. Frontend
 
@@ -244,8 +270,10 @@ npx tsc -b       # frontend type-check
 npm run build    # frontend production build
 ```
 
-There is no integration test suite yet (would need Testcontainers + a real
-Postgres) — that's future work, not something claimed as done here.
+There is no automated integration test suite yet (would need Testcontainers +
+a real Postgres) — the full flow was verified manually end-to-end (see "What's
+actually verified" above), but that's a one-time verification, not a
+regression-proof automated suite. That gap is real, and worth closing next.
 
 ---
 
@@ -286,8 +314,8 @@ something this session could do without you.
 
 ## Known gaps (honest list, not hidden)
 
-- Never run against a live database in this environment — see the table at
-  the top.
+- No automated integration test suite (Testcontainers) — the flow was
+  verified manually end-to-end once, not on every future change.
 - Uploaded settlement report / bank statement files aren't stored anywhere
   retrievable — only their hash and the parsed rows survive.
 - Reconciliation matches one order to one bank payout (1:1). Real

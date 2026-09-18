@@ -11,14 +11,14 @@ Status legend: `DONE` `IN PROGRESS` `NOT STARTED` `BLOCKED`
 ## At a glance
 
 ```
-Phase 0  Project Setup                         NOT STARTED
+Phase 0  Project Setup                         PARTIAL (see note below)
 Phase 1  Architecture & Technical Design        DONE
-Phase 2  Database Schema & Migrations           IN PROGRESS
-Phase 3  Backend Scaffolding & Auth             IN PROGRESS
-Phase 4  Ingestion & Platform Adapters          IN PROGRESS
-Phase 5  Reconciliation Engine                  IN PROGRESS
-Phase 6  REST API Layer                         IN PROGRESS
-Phase 7  Frontend Dashboard                     IN PROGRESS
+Phase 2  Database Schema & Migrations           DONE — verified 2026-09-19
+Phase 3  Backend Scaffolding & Auth             DONE — verified 2026-09-19
+Phase 4  Ingestion & Platform Adapters          DONE — verified 2026-09-19
+Phase 5  Reconciliation Engine                  DONE — verified 2026-09-19
+Phase 6  REST API Layer                         DONE (core surface; no Swagger) — verified 2026-09-19
+Phase 7  Frontend Dashboard                     DONE — verified 2026-09-19
 Phase 8  Analytics                              NOT STARTED
 Phase 9  Testing, Hardening & Deployment        NOT STARTED
 Phase 10 Real Platform Adapters (Swiggy/Zomato) BLOCKED on sample data
@@ -32,16 +32,23 @@ explicitly future work, not part of this build.
 ---
 
 ## Phase 0 — Project Setup
-**Status: NOT STARTED**
+**Status: PARTIAL** — git repo, Maven project, and React/Vite project all
+exist and were done as a side effect of later phases rather than as their
+own dedicated pass. `docker-compose.yml` is written but unverified (no
+Docker in the environment this was built in — see README "Deployment").
+Git remote/GitHub push not done (no GitHub account connected this session).
 
-- Initialize git repository.
-- Scaffold Maven multi-module or single-module Spring Boot project structure.
-- Scaffold React + Vite + TypeScript frontend project.
-- `docker-compose.yml` for local Postgres.
-- Base `README.md` (run instructions, project description).
+- Initialize git repository. ✓ (2026-09-19, local only — no remote pushed)
+- Scaffold Maven multi-module or single-module Spring Boot project structure. ✓
+- Scaffold React + Vite + TypeScript frontend project. ✓
+- `docker-compose.yml` for local Postgres. ✓ written, not run
+- Base `README.md` (run instructions, project description). ✓
 
 **Done when:** `docker-compose up` gives a running empty Spring Boot app
-connected to Postgres, and the React app runs locally against it.
+connected to Postgres, and the React app runs locally against it. **Not
+verified this way** — the backend and Postgres were verified running
+side-by-side locally (native processes, not Docker); see README "What's
+actually verified".
 
 ---
 
