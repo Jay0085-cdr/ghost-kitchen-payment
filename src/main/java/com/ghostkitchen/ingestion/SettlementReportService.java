@@ -111,6 +111,7 @@ public class SettlementReportService {
         }
     }
 
+    @Transactional(readOnly = true)
     public SettlementReportResponse getOwned(UUID reportId, UUID callerOrganizationId) {
         SettlementReport report = findOwned(reportId, callerOrganizationId);
         long count = platformTransactionRepository.countBySettlementReport_Id(reportId);
@@ -118,10 +119,12 @@ public class SettlementReportService {
     }
 
     /** Used by PlatformTransactionController to verify ownership before listing a report's line items. */
+    @Transactional(readOnly = true)
     public void assertOwned(UUID reportId, UUID callerOrganizationId) {
         findOwned(reportId, callerOrganizationId);
     }
 
+    @Transactional(readOnly = true)
     public List<SettlementReportResponse> listMine(UUID organizationId) {
         return settlementReportRepository.findByOrganization_IdOrderByUploadedAtDesc(organizationId).stream()
                 .map(report -> SettlementReportResponse.from(
