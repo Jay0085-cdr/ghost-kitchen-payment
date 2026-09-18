@@ -1,0 +1,46 @@
+import type { CSSProperties } from "react";
+
+export const authPageStyles: Record<string, CSSProperties> = {
+  page: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "100vh",
+    backgroundColor: "#f6f8fa",
+    fontFamily: "system-ui, sans-serif",
+  },
+  card: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    width: 340,
+    padding: 28,
+    backgroundColor: "#fff",
+    border: "1px solid #d0d7de",
+    borderRadius: 10,
+  },
+  title: { margin: 0, fontSize: 22 },
+  subtitle: { margin: "0 0 8px", color: "#57606a", fontSize: 14 },
+  label: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, fontWeight: 600, color: "#24292f" },
+  input: { padding: "8px 10px", fontSize: 14, border: "1px solid #d0d7de", borderRadius: 6 },
+  button: {
+    marginTop: 8,
+    padding: "10px 14px",
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#fff",
+    backgroundColor: "#1f2937",
+    border: "none",
+    borderRadius: 6,
+    cursor: "pointer",
+  },
+  error: {
+    padding: "8px 10px",
+    fontSize: 13,
+    color: "#cf222e",
+    backgroundColor: "#ffebe9",
+    border: "1px solid #ffb3ae",
+    borderRadius: 6,
+  },
+  footer: { margin: "8px 0 0", fontSize: 13, textAlign: "center", color: "#57606a" },
+};

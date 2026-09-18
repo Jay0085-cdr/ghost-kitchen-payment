@@ -1,0 +1,17 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: #24292f;
+}
+
+button {
+  font-family: inherit;
+}
+
+table th,
+table td {
+  font-size: 14px;
+}

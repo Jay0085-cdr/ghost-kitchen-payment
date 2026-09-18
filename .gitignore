@@ -1,0 +1,27 @@
+# Backend (Maven)
+target/
+*.class
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Environment / secrets
+.env
+.env.local
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Claude Code local state
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
