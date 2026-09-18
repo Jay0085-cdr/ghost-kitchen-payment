@@ -17,8 +17,8 @@ Phase 2  Database Schema & Migrations           IN PROGRESS
 Phase 3  Backend Scaffolding & Auth             IN PROGRESS
 Phase 4  Ingestion & Platform Adapters          IN PROGRESS
 Phase 5  Reconciliation Engine                  IN PROGRESS
-Phase 6  REST API Layer                         NOT STARTED
-Phase 7  Frontend Dashboard                     NOT STARTED
+Phase 6  REST API Layer                         IN PROGRESS
+Phase 7  Frontend Dashboard                     IN PROGRESS
 Phase 8  Analytics                              NOT STARTED
 Phase 9  Testing, Hardening & Deployment        NOT STARTED
 Phase 10 Real Platform Adapters (Swiggy/Zomato) BLOCKED on sample data
@@ -199,11 +199,26 @@ locked in as a regression test.
 ---
 
 ## Phase 6 — REST API Layer
-**Status: NOT STARTED**
+**Status: IN PROGRESS** — core reconciliation endpoints built and compiling
+(`mvn compile` verified); never hit with a real HTTP request (see README
+"What's actually verified"). OpenAPI/Swagger not added — not requested and
+kept out to stay within MVP scope.
 
-- Full API surface from `ARCHITECTURE.md` Section 8: reconciliation runs,
-  results querying/filtering, settlement report and bank statement retrieval.
-- OpenAPI/Swagger docs generated via springdoc-openapi.
+- `POST /api/reconciliation/runs` (trigger a run), `GET .../runs`,
+  `GET .../runs/{id}`, `GET .../results?runId=&status=`,
+  `GET .../results/{id}/discrepancies` — the reconciliation surface from
+  `ARCHITECTURE.md` §8, wired to real persistence (the Phase 5 engine's
+  output is now saved as `reconciliation_result`/`discrepancy` rows, not
+  just computed in memory).
+- A run correctly skips orders/bank transactions already resolved by a
+  prior run — prevents duplicate results if reconciliation is triggered
+  more than once over overlapping data.
+- "List mine" endpoints added for settlement reports, bank statements, and
+  reconciliation runs (`GET` with no id) — the Phase 4 API only had
+  fetch-by-id, which isn't enough for a dashboard to show anything without
+  already knowing every id in advance.
+- `GET /api/platforms` added — reference-data lookup for populating
+  platform dropdowns in the frontend.
 
 **Done when:** every endpoint in the documented API surface is implemented,
 authenticated, org-scoped, and visible in the generated Swagger UI.
@@ -211,15 +226,20 @@ authenticated, org-scoped, and visible in the generated Swagger UI.
 ---
 
 ## Phase 7 — Frontend Dashboard
-**Status: NOT STARTED**
+**Status: IN PROGRESS** — built, type-checks and production-builds
+(`npm run build` verified); never run against a live backend.
 
-- Login/register flow.
-- Upload flow (settlement report + bank statement) with status feedback
-  (`PENDING` / `PARSED` / `FAILED`).
-- Reconciliation results table with status filter (`MATCHED` / `UNDERPAID` /
-  `OVERPAID` / `MISSING` / `UNEXPLAINED`).
-- Discrepancy detail view (expected vs. actual, deduction breakdown,
-  explanation).
+- React + TypeScript + Vite, React Router, no UI framework (plain inline
+  styles) — kept deliberately minimal per "simple, functional, not fancy."
+- Login/register, Dashboard (org info + status counts across all runs +
+  recent run history), Uploads (settlement report + bank statement forms,
+  plus lists of what's been uploaded and their parse status), Reconciliation
+  (trigger a run, list past runs), Run detail (results table with status
+  filter, click a row to see its discrepancy breakdown).
+- JWT stored in `localStorage`, attached to every request via a small fetch
+  wrapper (`src/api/client.ts`) — fine for an MVP demo, not hardened for
+  production (no refresh flow, no XSS-hardening beyond React's own
+  escaping).
 
 **Done when:** an owner can, end-to-end in the UI, upload both files, trigger
 a reconciliation run, and see a correctly classified, explained result for

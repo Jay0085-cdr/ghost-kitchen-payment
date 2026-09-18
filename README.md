@@ -1,149 +1,331 @@
-# Ghost Kitchen — Build Reference
+# Ghost Kitchen
 
-Simple reference for what's actually been built so far. For full design
-details see `ARCHITECTURE.md`; for phase status/history see `ROADMAP.md`.
-This file is just a plain-English summary of Phases 2–5.
+Restaurant revenue reconciliation. A cloud kitchen sells through Swiggy,
+Zomato, and direct/WhatsApp orders. Each platform sends a settlement report
+(gross sales minus commission/ad fees/etc.) and then pays out a lump sum to
+the bank. Ghost Kitchen checks whether the bank payout actually matches what
+the platform said it owed, and flags exactly where it didn't.
 
-**Status: nothing has been run yet.** All of this is written but unverified
-— no Java/Maven/Postgres has been available to actually compile or run it.
+Full design rationale is in `ARCHITECTURE.md`. Phase-by-phase build history
+is in `ROADMAP.md`. This file is the practical "how do I run this" reference.
+
+**Status as of 2026-09-19:** backend compiles and all unit tests pass
+(verified — `mvn test`, 10/10 green). Frontend type-checks and builds
+(verified — `npm run build`). **The full stack has not been run end-to-end
+against a live database** — see "What's actually verified" below before
+trusting anything past that point.
 
 ---
 
-## The one-line pitch
+## What's actually verified vs. not
 
-A restaurant sells through Swiggy, Zomato, and direct orders. Each platform
-sends a settlement report (gross sales minus commission/fees) and then pays
-out a lump sum to the bank. This app checks whether the bank payout actually
-matches what the platform said it owed — and flags it when it doesn't.
+Be precise about this, because it matters:
 
----
-
-## Phase 2 — Database Schema
-
-**Where:** `src/main/resources/db/migration/V1__...sql` through `V12__...sql`
-
-10 Postgres tables, applied in order by Flyway:
-
-| Table | What it is |
+| Verified | Not verified |
 |---|---|
-| `organization` | One restaurant (the tenant) |
-| `app_user` | A login, belongs to one organization, role OWNER or STAFF |
-| `platform` | A sales channel name — Swiggy, Zomato, Direct |
-| `settlement_report` | One uploaded platform settlement file |
-| `platform_transaction` | One order's line-item from a settlement report |
-| `bank_statement` | One uploaded bank statement file |
-| `bank_transaction` | One line from a bank statement |
-| `reconciliation_run` | One "check this period" execution |
-| `reconciliation_result` | The verdict for one order/payout pair |
-| `discrepancy` | The breakdown of *why* a result was off |
+| Backend compiles (`mvn compile`) | The app has never been started (`mvn spring-boot:run`) |
+| All 10 reconciliation unit tests pass (`mvn test`) | No endpoint has ever been hit with a real HTTP request |
+| Frontend type-checks and production-builds | The frontend has never been run against a live backend |
+| Flyway migrations reviewed by hand, dependency order checked | Migrations have never actually been applied to a database |
+| A local Postgres 16 process is running and listening on 5432 | Nobody has successfully connected to it from this environment |
 
-Every business table has an `organization_id` column so one restaurant's
-data is never mixed with another's. Money is always `NUMERIC(12,2)`, never a
-float.
+The last row is the actual blocker. The command execution environment this
+was built in cannot reliably make outbound network connections to services
+on this same machine (confirmed with a raw TCP test, not just this app) —
+so starting the Spring Boot app, connecting it to Postgres, and hitting it
+from the frontend all need to happen in **your** terminal, not delegated
+back here. The "Run it yourself" section below is exactly what to run.
 
 ---
 
-## Phase 3 — Backend Scaffolding & Auth
+## Features
 
-**Where:** `pom.xml`, `src/main/java/com/ghostkitchen/`
-
-- A Java class for each of the 10 tables above (`entity/`), plus a
-  repository interface for each (`repository/`) so the app can read/write them.
-- `POST /api/auth/register` — creates a brand-new organization with you as
-  its OWNER, and logs you in.
-- `POST /api/auth/login` — checks your password, hands back a JWT (a signed
-  login token).
-- Every request after that proves who you are via that JWT — your
-  organization id comes from the token, never from anything you type into a
-  URL.
-- `GET /api/organizations/{id}` — a test endpoint proving the above: asking
-  for another organization's id gets rejected (403), not silently allowed.
-- One shared error format for every kind of failure (bad input, not found,
-  no permission, server error) — never a raw crash dumped to the screen.
-
----
-
-## Phase 4 — Ingestion (file uploads)
-
-**Where:** `src/main/java/com/ghostkitchen/ingestion/`
-
-- `POST /api/settlement-reports/upload` — upload a platform's CSV, it gets
-  turned into `platform_transaction` rows.
-- `POST /api/bank-statements/upload` — upload a bank statement CSV, it gets
-  turned into `bank_transaction` rows.
-- Two adapters read the CSV: `DirectOrderAdapter` (our own fixed format for
-  direct orders) and `GenericCsvAdapter` (a flexible fallback for any
-  platform, including Swiggy/Zomato — we don't have real sample files from
-  them yet, so there's no dedicated adapter for them yet).
-- Uploading the exact same file twice is rejected — it's fingerprinted by a
-  hash, so nothing gets double-counted.
-- A bad/malformed file doesn't crash anything — the upload is saved with a
-  `FAILED` status and a plain-English reason.
-- **Not done yet:** the original uploaded file itself isn't stored anywhere
-  — only the hash and the parsed rows survive.
+- **Auth** — register creates a new organization with you as its `OWNER`;
+  login issues a JWT. Every request after that is scoped to your
+  organization from the token — never from anything the client sends.
+- **Upload settlement reports** (CSV) — parsed into per-order line items,
+  duplicate uploads rejected by file hash, bad files fail cleanly with a
+  reason instead of crashing.
+- **Upload bank statements** (CSV) — same idea, turned into bank line items.
+- **Run reconciliation** — for a platform + date range, matches each order
+  to the closest bank payout (date window + amount tolerance, both
+  configurable) and classifies it `MATCHED` / `UNDERPAID` / `OVERPAID` /
+  `MISSING` / `UNEXPLAINED`. Plain rule-based Java — no AI/LLM anywhere in
+  the matching or the numbers.
+- **Dashboard** — organization summary, status counts across all runs,
+  recent run history.
+- **Discrepancy breakdown** — click into any result to see why it was
+  flagged.
 
 ---
 
-## Phase 5 — Reconciliation Engine
+## Architecture
 
-**Where:** `src/main/java/com/ghostkitchen/reconciliation/`
+```
+React (Vite, TS)  ──HTTP + JWT──▶  Spring Boot  ──JDBC──▶  PostgreSQL 16
+                                   │
+                                   ├─ auth/            register, login, JWT
+                                   ├─ organization/     org lookup, tenant scoping
+                                   ├─ platform/          Swiggy/Zomato/Direct lookup
+                                   ├─ ingestion/         CSV upload → normalized rows
+                                   │    └─ adapter/      per-platform CSV parsing (pluggable)
+                                   ├─ reconciliation/    matching engine + REST layer
+                                   ├─ security/          stateless JWT filter
+                                   └─ exception/         one JSON error shape for everything
+```
 
-The actual matching logic — plain rule-based Java, no AI involved in the
-math anywhere.
+- **Multi-tenant from day one**: every business table carries
+  `organization_id`; the JWT — not the client — is the only source of truth
+  for which organization a request belongs to.
+- **Money is `NUMERIC(12,2)` everywhere**, never floating point.
+- **Adapters are pluggable**: a new platform is one new class implementing
+  `SettlementReportAdapter` — the reconciliation engine never knows which
+  platform a transaction came from.
+- **The reconciliation engine takes plain data in, returns plain data out**
+  — no Spring, no database, fully unit-testable with dummy objects (see
+  `ReconciliationEngineTest`).
 
-For every order (`platform_transaction`), it looks for the closest bank
-payout within 7 days and ₹1 of the expected amount, and calls it one of:
-
-- **MATCHED** — amounts line up
-- **UNDERPAID** — bank paid less than expected
-- **OVERPAID** — bank paid more than expected
-- **MISSING** — no bank payout ever showed up for this order
-- **UNEXPLAINED** — a bank payout exists with no matching order
-
-A bank payout can never be claimed by two orders — that's tested explicitly.
-
-**Not done yet:** this logic exists but nothing calls it — there's no
-"run reconciliation" button/endpoint, and no results get saved to the
-database. That's Phase 6.
-
-**One open question, called out in the code:** the engine currently matches
-one order to one payout. Real settlements might actually bundle many orders
-into a single bank payout — we won't know for sure until we see a real
-Swiggy/Zomato report, so this is deliberately left simple for now.
+Full schema, relationships, and the design decisions behind them are in
+`ARCHITECTURE.md`.
 
 ---
 
-## What's next
+## Tech stack
 
-- **Phase 6** — wire the reconciliation engine up to a real endpoint and
-  save results to the database.
-- **Before that** — actually run Phases 2–5 against a real Postgres to
-  confirm all of the above works, not just compiles by inspection.
+| Layer | Choice |
+|---|---|
+| Backend | Java 21, Spring Boot 3.3, Spring Security (JWT), Spring Data JPA |
+| Database | PostgreSQL 16, Flyway migrations |
+| Frontend | React 19 + TypeScript, Vite, React Router |
+| Auth | Stateless JWT (HS256), BCrypt password hashing |
+
+---
+
+## Setup
+
+### Prerequisites
+
+- Java 21 (JDK, not just JRE)
+- Maven 3.9+
+- PostgreSQL 16
+- Node.js 20+ / npm
+- Git
+
+If any of these aren't installed as a normal Windows program, portable
+(no-admin-install) copies work fine — that's how this was built:
+- JDK: https://adoptium.net (zip build, not the installer)
+- Maven: https://maven.apache.org/download.cgi (binary zip)
+- PostgreSQL: EDB's "Binaries" zip (not the interactive installer) at
+  https://www.enterprisedb.com/download-postgresql-binaries
+- Git: https://git-scm.com (PortableGit release on the GitHub releases page)
+
+Extract each, then either add `<tool>/bin` to your PATH or reference the
+full path in commands below.
+
+### 1. Database
+
+```powershell
+# Initialize a data directory (once)
+initdb -D <path-to-data-dir> -U postgres -A trust --encoding=UTF8
+
+# Start Postgres (leave this running in its own terminal)
+pg_ctl -D <path-to-data-dir> -l pg.log start
+
+# Create the database
+createdb -U postgres ghost_kitchen
+```
+
+`-A trust` means no password is actually checked — fine for a local
+throwaway dev database, not for anything else.
+
+### 2. Backend
+
+```powershell
+cd ghost-kitchen-payment
+
+# JWT_SECRET must be at least 32 bytes or the app refuses to start
+$env:JWT_SECRET = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 48 | ForEach-Object {[char]$_})
+
+mvn spring-boot:run
+```
+
+On success you'll see Flyway apply 12 migrations, then Tomcat start on port
+8080. If `DB_USERNAME`/`DB_PASSWORD`/`DB_URL` need to differ from the
+defaults (`postgres`/`postgres`/`jdbc:postgresql://localhost:5432/ghost_kitchen`),
+set them as env vars before running.
+
+### 3. Frontend
+
+```powershell
+cd ghost-kitchen-payment/frontend
+npm install
+npm run dev
+```
+
+Opens on `http://localhost:5173` and talks to the backend at
+`http://localhost:8080` by default (override with a `.env.local` containing
+`VITE_API_BASE_URL=...`).
+
+### 4. Try it
+
+1. Open `http://localhost:5173`, register a kitchen.
+2. Go to **Uploads**, upload a settlement report CSV (see format below) and
+   a bank statement CSV.
+3. Go to **Reconciliation**, select the platform and a date range covering
+   your uploads, click **Run reconciliation**.
+4. Click into the run to see per-order results and discrepancies.
+
+---
+
+## Sample CSV formats
+
+**Settlement report — Direct platform** (`platform` dropdown = Direct):
+```csv
+order_id,order_date,gross_amount,other_deduction
+ORD-1001,2026-09-01,1000.00,20.00
+ORD-1002,2026-09-02,500.00,0
+```
+
+**Settlement report — any other platform** (generic fallback adapter,
+flexible column names — `order_id`/`platform_order_id`, `gross_amount`/
+`gross`, `commission`, `advertising_fee`, `net_expected_payout`/`payout` are
+all recognized):
+```csv
+order_id,order_date,gross_amount,commission,net_expected_payout
+ORD-2001,2026-09-01,1000.00,150.00,850.00
+```
+
+**Bank statement:**
+```csv
+txn_date,amount,narration,reference_no
+2026-09-03,980.00,SWIGGY SETTLEMENT,REF001
+2026-09-04,500.00,DIRECT PAYOUT,REF002
+```
+
+---
+
+## API reference
+
+All endpoints except `/api/auth/*` require `Authorization: Bearer <token>`.
+Full request/response shapes are in the DTO classes next to each
+controller — this is the map, not the full spec.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/auth/register` | Create organization + owner account, returns JWT |
+| POST | `/api/auth/login` | Returns JWT |
+| GET | `/api/organizations/{id}` | Org details (only your own — others 403) |
+| GET | `/api/platforms` | List Swiggy/Zomato/Direct for dropdowns |
+| POST | `/api/settlement-reports/upload` | Multipart: `file`, `platformId`, `periodStart`, `periodEnd` |
+| GET | `/api/settlement-reports` | List your uploads |
+| GET | `/api/settlement-reports/{id}` | One upload's detail |
+| GET | `/api/platform-transactions?reportId=` | Line items from one report |
+| POST | `/api/bank-statements/upload` | Multipart: `file` |
+| GET | `/api/bank-statements` | List your uploads |
+| GET | `/api/bank-statements/{id}` | One upload's detail + its transactions |
+| POST | `/api/reconciliation/runs` | Body: `{ platformId, periodStart, periodEnd }` — triggers matching |
+| GET | `/api/reconciliation/runs` | List your runs, newest first |
+| GET | `/api/reconciliation/runs/{id}` | One run's status counts |
+| GET | `/api/reconciliation/results?runId=&status=` | Per-order verdicts, optional status filter |
+| GET | `/api/reconciliation/results/{id}/discrepancies` | Why one result was flagged |
+
+Errors always come back as:
+```json
+{ "timestamp": "...", "status": 404, "error": "Not Found", "message": "...", "path": "/api/..." }
+```
+
+---
+
+## Testing
+
+```powershell
+mvn test        # backend — 10 reconciliation engine tests, no DB needed
+npx tsc -b       # frontend type-check
+npm run build    # frontend production build
+```
+
+There is no integration test suite yet (would need Testcontainers + a real
+Postgres) — that's future work, not something claimed as done here.
+
+---
+
+## Deployment
+
+**Written and present in this repo, but not actually deployed anywhere —**
+no cloud account was available in the environment this was built in.
+`docker-compose.yml`, `Dockerfile` (backend), and `frontend/Dockerfile` are
+here and believed correct by inspection, but **Docker itself was never
+installed or tested in this environment either**, so treat these as a
+starting point to verify, not a proven path.
+
+### Local, via Docker (once you have Docker installed)
+
+```powershell
+# .env file in the repo root, containing:
+# JWT_SECRET=<32+ random characters>
+
+docker compose up --build
+```
+Backend on `:8080`, frontend on `:5173`, Postgres on `:5432` (with a named
+volume so data survives restarts).
+
+### Cloud (not done — here's the shape of it)
+
+- **Backend**: any host that runs a Docker image + gives you a Postgres
+  instance (Render, Railway, Fly.io all fit this). Point it at the
+  `Dockerfile` in the repo root, set `DB_URL`/`DB_USERNAME`/`DB_PASSWORD`/
+  `JWT_SECRET` as environment variables.
+- **Frontend**: any static host that can run `npm run build` (Vercel,
+  Netlify, or the `frontend/Dockerfile` + nginx image). Set
+  `VITE_API_BASE_URL` to wherever the backend ends up.
+
+Actually deploying to one of these needs an account on that platform — not
+something this session could do without you.
+
+---
+
+## Known gaps (honest list, not hidden)
+
+- Never run against a live database in this environment — see the table at
+  the top.
+- Uploaded settlement report / bank statement files aren't stored anywhere
+  retrievable — only their hash and the parsed rows survive.
+- Reconciliation matches one order to one bank payout (1:1). Real
+  settlements may batch many orders into a single payout — unconfirmed
+  without a real Swiggy/Zomato sample report, so deliberately left simple.
+- No Swiggy/Zomato-specific adapters yet — uploads for those platforms fall
+  back to a generic, flexible-column CSV parser until real sample reports
+  are available to build against (see `ARCHITECTURE.md` §2, "no invented
+  platform rules").
+- No integration test suite (Testcontainers) — only unit tests.
+- Docker configs are unverified (no Docker in the build environment).
 
 ---
 
 ## Folder map
 
 ```
-ARCHITECTURE.md               full design doc
-ROADMAP.md                    phase-by-phase status/history
-README.md                     this file
-pom.xml                       Java project + dependencies
+ARCHITECTURE.md, ROADMAP.md      design doc / phase history
+pom.xml, Dockerfile               backend build + container
+docker-compose.yml                postgres + backend + frontend, wired together
 
 src/main/resources/
-  application.yml             app config (DB, JWT, upload limits)
-  db/migration/                Phase 2 — SQL schema
-scripts/dev-seed.sql          optional sample org+user for local testing
+  application.yml                 DB / JWT / upload config (env-var driven)
+  db/migration/                   Flyway SQL, V1–V12
 
 src/main/java/com/ghostkitchen/
-  entity/                     Phase 3 — one class per DB table
-  repository/                 Phase 3 — DB read/write for each table
-  security/, config/          Phase 3 — JWT + login
-  auth/, organization/        Phase 3 — register/login/org endpoints
-  exception/                  Phase 3 — shared error handling
-  ingestion/                  Phase 4 — CSV upload + parsing
-  reconciliation/             Phase 5 — matching engine
+  entity/, repository/            one class + repo per DB table
+  security/, config/               stateless JWT auth
+  auth/, organization/, platform/  register/login, org + platform lookups
+  ingestion/                       CSV upload, parsing, adapters
+  reconciliation/                  matching engine + REST layer
+  exception/                       shared error handling
 
-src/test/java/com/ghostkitchen/
-  reconciliation/             Phase 5 — unit tests
+src/test/java/.../reconciliation/  engine unit tests
+
+frontend/
+  src/api/client.ts                 fetch wrapper (JWT header, error handling)
+  src/auth/                         login state
+  src/pages/                        Dashboard, Uploads, Reconciliation, Run detail
+  Dockerfile, nginx.conf            static-serve container
 ```
