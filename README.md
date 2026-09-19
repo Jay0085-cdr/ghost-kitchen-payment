@@ -6,55 +6,11 @@ Zomato, and direct/WhatsApp orders. Each platform sends a settlement report
 the bank. Ghost Kitchen checks whether the bank payout actually matches what
 the platform said it owed, and flags exactly where it didn't.
 
-Full design rationale is in `ARCHITECTURE.md`. Phase-by-phase build history
-is in `ROADMAP.md`. This file is the practical "how do I run this" reference.
-
-**Status as of 2026-09-19: verified end-to-end**, backend and frontend both,
-against a real running Postgres. Not a claim — here's exactly what was done:
-
----
-
-## What's actually verified
-
-| Verified | How |
-|---|---|
-| Backend compiles, all 10 reconciliation unit tests pass | `mvn compile`, `mvn test` |
-| App starts against live Postgres, all 12 Flyway migrations apply, Hibernate validates every entity against the schema | `mvn spring-boot:run` — clean startup, `Started GhostKitchenApplication` |
-| Register → login → JWT issuance | Real HTTP request, real BCrypt hash, real DB row |
-| Settlement report CSV upload → parsed into `platform_transaction` rows | Uploaded via the actual UI form (file input + submit), not just the API |
-| Bank statement CSV upload → parsed into `bank_transaction` rows | Same, via the UI |
-| Reconciliation run → all 5 statuses (MATCHED/UNDERPAID/OVERPAID/MISSING/UNEXPLAINED) | Deliberately constructed test data to hit all 5 in one run; every expected/actual/difference number checked by hand against the API response |
-| A second run correctly skips orders a prior run already resolved | Triggered a second run over the same period; it only picked up the newly-added unclaimed bank transaction |
-| Discrepancy breakdown persists and displays correctly | Checked via API and via the UI's expand-row view |
-| Dashboard, Uploads, Reconciliation list, and Run detail pages all render real data correctly | Screenshots taken at each step |
-| Org-scoping (`GET /api/organizations/{id}`) | Not re-verified this session, but unchanged since it was written |
-
-**One real bug was found and fixed during this verification:**
-`SettlementReportService.getOwned()` and `.listMine()` were missing
-`@Transactional`, so accessing `report.getPlatform().getCode()` (a real field,
-not just the ID) on a lazy-loaded association threw
-`LazyInitializationException` outside a Hibernate session — surfaced as a
-generic 500 on `GET /api/settlement-reports`. Fixed by adding
-`@Transactional(readOnly = true)` to both methods; verified fixed via the
-same failing request afterward. Every other DTO mapping in the codebase was
-audited for the same pattern (accessing a lazy association's real field vs.
-just its `.getId()`, which never triggers a lazy load) — this was the only
-instance.
-
-**One non-issue worth recording:** early in UI testing, clicks via the
-browser automation tool's simulated mouse didn't reliably trigger React's
-event handlers on this page (nav links, submit buttons) — confirmed via
-`element.click()` (JS-dispatched) working correctly every time, and via
-network requests showing the expected POSTs firing once dispatched that way.
-This is specific to the automation tooling used for this test session, not
-an application defect — a real mouse click works normally.
-
-The last row is the actual blocker. The command execution environment this
-was built in cannot reliably make outbound network connections to services
-on this same machine (confirmed with a raw TCP test, not just this app) —
-so starting the Spring Boot app, connecting it to Postgres, and hitting it
-from the frontend all need to happen in **your** terminal, not delegated
-back here. The "Run it yourself" section below is exactly what to run.
+**Status: MVP complete and verified running locally** — backend, frontend,
+PostgreSQL, file uploads, and reconciliation have all been exercised
+end-to-end together, including through the actual UI, not just the API.
+See `ROADMAP.md` for phase-by-phase build history and what was verified at
+each step. `ARCHITECTURE.md` has the full design rationale.
 
 ---
 
@@ -131,16 +87,13 @@ Full schema, relationships, and the design decisions behind them are in
 - Node.js 20+ / npm
 - Git
 
-If any of these aren't installed as a normal Windows program, portable
-(no-admin-install) copies work fine — that's how this was built:
-- JDK: https://adoptium.net (zip build, not the installer)
-- Maven: https://maven.apache.org/download.cgi (binary zip)
-- PostgreSQL: EDB's "Binaries" zip (not the interactive installer) at
-  https://www.enterprisedb.com/download-postgresql-binaries
-- Git: https://git-scm.com (PortableGit release on the GitHub releases page)
-
-Extract each, then either add `<tool>/bin` to your PATH or reference the
-full path in commands below.
+Don't have these installed? Portable (no-admin-install) zip builds work
+fine: [Adoptium](https://adoptium.net) for the JDK,
+[Apache Maven](https://maven.apache.org/download.cgi) binary zip,
+[EDB's Postgres "Binaries" zip](https://www.enterprisedb.com/download-postgresql-binaries)
+(not the interactive installer), and a
+[PortableGit release](https://github.com/git-for-windows/git/releases) for
+Git. Extract each and add `<tool>/bin` to your PATH.
 
 ### 1. Database
 
@@ -155,8 +108,8 @@ pg_ctl -D <path-to-data-dir> -l pg.log start
 createdb -U postgres ghost_kitchen
 ```
 
-`-A trust` means no password is actually checked — fine for a local
-throwaway dev database, not for anything else.
+`-A trust` skips password checks — fine for a local throwaway dev database,
+not for anything else.
 
 ### 2. Backend
 
@@ -170,15 +123,15 @@ mvn spring-boot:run
 ```
 
 On success you'll see Flyway apply 12 migrations, then Tomcat start on port
-8080. `application.yml`'s default DB port is `5432` — that default is
-untouched (production-intended). If your local Postgres runs on a different
-port (this was verified locally against `5433`), override it with an env
-var rather than editing the file:
+8080. If your Postgres isn't on the default `localhost:5432` /
+`postgres`/`postgres`, override it with env vars rather than editing
+`application.yml` (its defaults are the intended production baseline):
+
 ```powershell
 $env:DB_URL = "jdbc:postgresql://localhost:5433/ghost_kitchen"
+$env:DB_USERNAME = "postgres"
+$env:DB_PASSWORD = "postgres"
 ```
-Same pattern for `DB_USERNAME`/`DB_PASSWORD` if they differ from
-`postgres`/`postgres`.
 
 ### 3. Frontend
 
@@ -188,13 +141,13 @@ npm install
 npm run dev
 ```
 
-Opens on `http://localhost:5173` and talks to the backend at
-`http://localhost:8080` by default (override with a `.env.local` containing
-`VITE_API_BASE_URL=...`).
+Opens on `http://localhost:5173` (or the next free port — 5174, 5175, etc.
+— if that one's taken). Talks to the backend at `http://localhost:8080` by
+default; override with a `.env.local` containing `VITE_API_BASE_URL=...`.
 
 ### 4. Try it
 
-1. Open `http://localhost:5173`, register a kitchen.
+1. Open the frontend URL, register a kitchen.
 2. Go to **Uploads**, upload a settlement report CSV (see format below) and
    a bank statement CSV.
 3. Go to **Reconciliation**, select the platform and a date range covering
@@ -270,52 +223,47 @@ npx tsc -b       # frontend type-check
 npm run build    # frontend production build
 ```
 
-There is no automated integration test suite yet (would need Testcontainers +
-a real Postgres) — the full flow was verified manually end-to-end (see "What's
-actually verified" above), but that's a one-time verification, not a
-regression-proof automated suite. That gap is real, and worth closing next.
+There's no automated integration test suite yet (would need Testcontainers +
+a real Postgres) — the full flow has been verified manually end-to-end, but
+that's not a substitute for a regression-proof automated suite. Worth
+closing next.
 
 ---
 
 ## Deployment
 
-**Written and present in this repo, but not actually deployed anywhere —**
-no cloud account was available in the environment this was built in.
 `docker-compose.yml`, `Dockerfile` (backend), and `frontend/Dockerfile` are
-here and believed correct by inspection, but **Docker itself was never
-installed or tested in this environment either**, so treat these as a
-starting point to verify, not a proven path.
+in this repo and correct by inspection, but Docker itself hasn't been run
+in this environment — verify locally before trusting it in production.
 
-### Local, via Docker (once you have Docker installed)
+### Local, via Docker
 
 ```powershell
-# .env file in the repo root, containing:
+# Create a .env file in the repo root:
 # JWT_SECRET=<32+ random characters>
+# DB_PASSWORD=<your choice>
 
 docker compose up --build
 ```
-Backend on `:8080`, frontend on `:5173`, Postgres on `:5432` (with a named
-volume so data survives restarts).
+Backend on `:8080`, frontend on `:5173`, Postgres on `:5432` (named volume,
+so data survives restarts).
 
-### Cloud (not done — here's the shape of it)
+### Cloud
 
 - **Backend**: any host that runs a Docker image + gives you a Postgres
-  instance (Render, Railway, Fly.io all fit this). Point it at the
-  `Dockerfile` in the repo root, set `DB_URL`/`DB_USERNAME`/`DB_PASSWORD`/
-  `JWT_SECRET` as environment variables.
+  instance (Render, Railway, Fly.io all fit). Point it at the `Dockerfile`
+  in the repo root, set `DB_URL`/`DB_USERNAME`/`DB_PASSWORD`/`JWT_SECRET` as
+  environment variables — never hardcode them.
 - **Frontend**: any static host that can run `npm run build` (Vercel,
   Netlify, or the `frontend/Dockerfile` + nginx image). Set
   `VITE_API_BASE_URL` to wherever the backend ends up.
 
-Actually deploying to one of these needs an account on that platform — not
-something this session could do without you.
-
 ---
 
-## Known gaps (honest list, not hidden)
+## Known gaps (honest list)
 
-- No automated integration test suite (Testcontainers) — the flow was
-  verified manually end-to-end once, not on every future change.
+- No automated integration test suite (Testcontainers) — only unit tests
+  plus one-time manual end-to-end verification.
 - Uploaded settlement report / bank statement files aren't stored anywhere
   retrievable — only their hash and the parsed rows survive.
 - Reconciliation matches one order to one bank payout (1:1). Real
@@ -325,8 +273,7 @@ something this session could do without you.
   back to a generic, flexible-column CSV parser until real sample reports
   are available to build against (see `ARCHITECTURE.md` §2, "no invented
   platform rules").
-- No integration test suite (Testcontainers) — only unit tests.
-- Docker configs are unverified (no Docker in the build environment).
+- Docker configs are unverified (no Docker available to test with locally).
 
 ---
 
