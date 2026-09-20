@@ -21,9 +21,14 @@ spring:
       max-request-size: 5MB
 
 server:
-  port: ${SERVER_PORT:8080}
+  # PORT is set by hosting platforms like Render; SERVER_PORT is the previous local-only override; 8080 is the default.
+  port: ${PORT:${SERVER_PORT:8080}}
 
 ghost-kitchen:
   jwt:
     secret: ${JWT_SECRET:}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  cors:
+    # Comma-separated allowed frontend origins. In production, set ALLOWED_ORIGINS to the
+    # deployed frontend's real URL(s) — the localhost default only works for local dev.
+    allowed-origins: ${ALLOWED_ORIGINS:http://localhost:*}

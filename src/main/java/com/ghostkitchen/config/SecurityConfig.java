@@ -3,6 +3,7 @@ package com.ghostkitchen.config;
 import com.ghostkitchen.security.CustomUserDetailsService;
 import com.ghostkitchen.security.JwtAuthenticationFilter;
 import com.ghostkitchen.security.JwtService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -20,6 +21,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -46,11 +48,15 @@ public class SecurityConfig {
         return config.getAuthenticationManager();
     }
 
-    /** Permissive local-dev default; tighten to the real frontend origin once it's deployed (Phase 7). */
+    /**
+     * Defaults to permissive localhost-only for local dev. In production, set ALLOWED_ORIGINS
+     * (comma-separated, e.g. "https://ghost-kitchen.onrender.com") to the real frontend origin(s).
+     */
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
+    public CorsConfigurationSource corsConfigurationSource(
+            @Value("${ghost-kitchen.cors.allowed-origins:http://localhost:*}") String allowedOrigins) {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(List.of("http://localhost:*"));
+        configuration.setAllowedOriginPatterns(Arrays.asList(allowedOrigins.split(",")));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
